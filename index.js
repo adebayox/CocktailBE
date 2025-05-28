@@ -14,13 +14,18 @@ const swaggerOptions = require("./swaggerOptions");
 //db connection
 connection();
 
+// middlewares
+app.use(express.json());
+app.use(
+  cors({
+    origin: "https://cocktailrecipay.netlify.app",
+    credentials: true,
+  })
+);
+
 const specs = swaggerJsdoc(swaggerOptions);
 
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(specs));
-
-// middlewares
-app.use(express.json());
-app.use(cors());
 
 //routes
 app.use("/api/users", userRoutes);
