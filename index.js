@@ -7,9 +7,16 @@ const userRoutes = require("./routes/users");
 const authRoutes = require("./routes/auth");
 const cocktailRoutes = require("./routes/cocktail");
 const collectionRoutes = require("./routes/collectionRoutes");
+const swaggerJsdoc = require("swagger-jsdoc");
+const swaggerUi = require("swagger-ui-express");
+const swaggerOptions = require("./swaggerOptions");
 
 //db connection
 connection();
+
+const specs = swaggerJsdoc(swaggerOptions);
+
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(specs));
 
 // middlewares
 app.use(express.json());

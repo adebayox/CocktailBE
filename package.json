@@ -24,6 +24,8 @@
     "nodemon": "^3.1.9",
     "openai": "^4.83.0",
     "stripe": "^17.7.0",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.1",
     "uuid": "^11.1.0"
   }
 }
