@@ -16,7 +16,7 @@ connection();
 
 const allowedOrigins = [
   "http://localhost:5173",
-  "https://cocktailrecipegen.netlify.app/login",
+  "https://cocktailrecipegen.netlify.app",
 ];
 
 app.use(
@@ -34,7 +34,7 @@ app.use(
   })
 );
 
-app.options("*", cors()); // Handle preflight requests
+app.options("*", cors());
 
 // app.use(cors());
 
