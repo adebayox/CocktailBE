@@ -2,7 +2,6 @@ const { v4: uuidv4 } = require("uuid");
 const { OpenAI } = require("openai");
 const cloudinary = require("cloudinary").v2;
 
-// Configure Cloudinary (add these to your environment variables)
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -87,7 +86,7 @@ The healthRating should be on a scale of 1-10 where:
 7-10: Lower alcohol content, fresh/natural ingredients, functional health benefits`;
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4", // Upgraded to GPT-4 for better reasoning and detail
+      model: "gpt-4",
       messages: [
         {
           role: "system",
@@ -99,14 +98,12 @@ The healthRating should be on a scale of 1-10 where:
           content: prompt,
         },
       ],
-      temperature: 0.8, // Slightly higher for more creativity
-      max_tokens: 1200, // Increased for more detailed responses
+      temperature: 0.8,
+      max_tokens: 1200,
     });
 
-    // Get the response content
     const recipeString = response.choices[0].message.content.trim();
 
-    // Clean up any potential markdown formatting
     const cleanedRecipeString = recipeString
       .replace(/```json\n?/g, "")
       .replace(/```\n?/g, "")
@@ -122,7 +119,6 @@ The healthRating should be on a scale of 1-10 where:
       throw new Error("Invalid JSON format received from API");
     }
 
-    // Enhanced validation for the recipe structure
     const requiredFields = [
       "name",
       "ingredients",
@@ -141,7 +137,6 @@ The healthRating should be on a scale of 1-10 where:
       );
     }
 
-    // Validate arrays have sufficient content
     if (!Array.isArray(recipe.ingredients) || recipe.ingredients.length < 3) {
       throw new Error("Recipe must have at least 3 detailed ingredients");
     }
@@ -170,12 +165,12 @@ The healthRating should be on a scale of 1-10 where:
         prompt: imagePrompt,
         n: 1,
         size: "1024x1024",
-        quality: "hd", // Higher quality images
-        style: "vivid", // More vibrant colors
+        quality: "hd",
+        style: "vivid",
       });
 
       if (imageResponse.data && imageResponse.data[0].url) {
-        // Upload the temporary DALL-E URL to Cloudinary for permanent storage
+        // Upload the temporary DALL-E URL to Cloudinary
         const permanentImageUrl = await uploadToCloudinary(
           imageResponse.data[0].url,
           recipe.cocktailId
@@ -185,7 +180,6 @@ The healthRating should be on a scale of 1-10 where:
       }
     } catch (imageError) {
       console.error("Image generation/upload error:", imageError);
-      // Continue without an image if generation/upload fails
     }
 
     return recipe;
