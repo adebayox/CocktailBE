@@ -14,14 +14,39 @@ const swaggerOptions = require("./swaggerOptions");
 //db connection
 connection();
 
-// middlewares
-app.use(express.json());
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://cocktailrecipay.netlify.app",
+];
+
 app.use(
   cors({
-    origin: "https://cocktailrecipay.netlify.app",
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
+
+app.options("*", cors()); // Handle preflight requests
+
+// app.use(cors());
+
+// app.use(
+//   cors({
+//     origin: "https://cocktailrecipay.netlify.app",
+//     credentials: true,
+//   })
+// );
+
+// middlewares
+app.use(express.json());
 
 const specs = swaggerJsdoc(swaggerOptions);
 

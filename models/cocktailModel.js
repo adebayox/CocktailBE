@@ -1,5 +1,5 @@
 const mongoose = require("mongoose");
-const User = require("./user"); // Import the User model
+const User = require("./user");
 
 const CocktailSchema = new mongoose.Schema({
   name: String,

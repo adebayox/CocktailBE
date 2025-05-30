@@ -41,7 +41,7 @@ const saveCocktail = async (req, res) => {
       cocktailId,
       healthRating,
       healthNotes,
-      imageUrl, // Ensure imageUrl is included
+      imageUrl, 
     } = req.body;
 
     if (!name || !ingredients || !instructions || !userId) {
@@ -57,7 +57,7 @@ const saveCocktail = async (req, res) => {
       cocktailId,
       healthRating,
       healthNotes,
-      imageUrl, // Save the image URL
+      imageUrl, 
       userId,
     });
 
@@ -101,7 +101,7 @@ const saveToCollection = async (req, res) => {
       collection = new Collection({
         name: collectionName,
         userId,
-        cocktails: [], // Initialize with empty array
+        cocktails: [], 
       });
     }
 
@@ -159,8 +159,8 @@ const saveToCollection = async (req, res) => {
 // Delete a saved cocktail recipe
 const deleteCocktail = async (req, res) => {
   try {
-    const { cocktailId } = req.params; // Get the cocktail ID from the URL
-    const userId = req.user._id; // Get the user ID from the request
+    const { cocktailId } = req.params; 
+    const userId = req.user._id; 
 
     // Validate the cocktail ID
     if (!mongoose.isValidObjectId(cocktailId)) {
@@ -170,7 +170,7 @@ const deleteCocktail = async (req, res) => {
     // Find and delete the cocktail
     const deletedCocktail = await Cocktail.findOneAndDelete({
       _id: cocktailId,
-      userId: userId, // Ensure the cocktail belongs to the user
+      userId: userId, 
     });
 
     if (!deletedCocktail) {
@@ -189,8 +189,8 @@ const deleteCocktail = async (req, res) => {
 // Delete a collection
 const deleteCollection = async (req, res) => {
   try {
-    const { collectionId } = req.params; // Get the collection ID from the URL
-    const userId = req.user._id; // Get the user ID from the request
+    const { collectionId } = req.params; 
+    const userId = req.user._id; 
 
     // Validate the collection ID
     if (!mongoose.isValidObjectId(collectionId)) {
@@ -200,7 +200,7 @@ const deleteCollection = async (req, res) => {
     // Find and delete the collection
     const deletedCollection = await Collection.findOneAndDelete({
       _id: collectionId,
-      userId: userId, // Ensure the collection belongs to the user
+      userId: userId, 
     });
 
     if (!deletedCollection) {

@@ -7,26 +7,22 @@ const submitRating = async (req, res) => {
   const { userId, recipeId, rating, feedback } = req.body;
 
   try {
-    // Validate required fields
     if (!userId || !recipeId || !rating) {
       return res.status(400).json({ message: "Missing required fields" });
     }
 
-    // Validate rating (1-5)
     if (typeof rating !== "number" || rating < 1 || rating > 5) {
       return res
         .status(400)
         .json({ message: "Rating must be a number between 1 and 5" });
     }
 
-    // Find the cocktail by either _id or cocktailId
     let cocktail;
     if (mongoose.isValidObjectId(recipeId)) {
       cocktail = await Cocktail.findById(recipeId);
     }
 
     if (!cocktail) {
-      // If not found by _id, try finding by cocktailId
       cocktail = await Cocktail.findOne({ cocktailId: recipeId });
     }
 
@@ -37,7 +33,7 @@ const submitRating = async (req, res) => {
     // Create a new rating using the cocktail's _id
     const newRating = new Rating({
       userId,
-      recipeId: cocktail._id, // Always use the MongoDB _id
+      recipeId: cocktail._id,
       rating,
       feedback,
     });
@@ -59,14 +55,12 @@ const getRatings = async (req, res) => {
   const { recipeId } = req.params;
 
   try {
-    // Find the cocktail by either _id or cocktailId
     let cocktail;
     if (mongoose.isValidObjectId(recipeId)) {
       cocktail = await Cocktail.findById(recipeId);
     }
 
     if (!cocktail) {
-      // If not found by _id, try finding by cocktailId
       cocktail = await Cocktail.findOne({ cocktailId: recipeId });
     }
 
