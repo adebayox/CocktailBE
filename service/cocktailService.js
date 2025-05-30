@@ -150,10 +150,8 @@ The healthRating should be on a scale of 1-10 where:
       throw new Error("Recipe must have at least 5 detailed instructions");
     }
 
-    // Add a unique cocktailId to the recipe
     recipe.cocktailId = uuidv4();
 
-    // Generate an enhanced image for the cocktail
     try {
       const imagePrompt = `A stunning, professional photograph of a ${
         recipe.name
