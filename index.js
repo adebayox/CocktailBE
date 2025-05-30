@@ -16,7 +16,7 @@ connection();
 
 const allowedOrigins = [
   "http://localhost:5173",
-  "https://cocktailrecipay.netlify.app",
+  "https://cocktailrecipegen.netlify.app/login",
 ];
 
 app.use(
