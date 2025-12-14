@@ -1,6 +1,12 @@
 const { v4: uuidv4 } = require("uuid");
 const { OpenAI } = require("openai");
 const cloudinary = require("cloudinary").v2;
+const { 
+  executeWithResilience, 
+  withTimeout,
+  AI_TIMEOUTS 
+} = require("../utils/aiHelpers");
+const { recipeCache, SimpleCache, CACHE_CONFIG } = require("../utils/cache");
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -12,24 +18,59 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Function to upload image to Cloudinary
+// Function to upload image to Cloudinary with optimization
 const uploadToCloudinary = async (imageUrl, cocktailId) => {
   try {
     const result = await cloudinary.uploader.upload(imageUrl, {
       folder: "cocktail-images",
       public_id: cocktailId,
       resource_type: "image",
-      format: "png",
+      format: "webp",           // WebP is smaller and faster than PNG
+      quality: "auto:good",     // Auto-optimize quality
+      fetch_format: "auto",     // Serve best format for browser
     });
 
-    return result.secure_url;
+    // Return both the original URL and pre-built optimized URLs
+    const baseUrl = result.secure_url.replace('/upload/', '/upload/');
+    
+    return {
+      original: result.secure_url,
+      // Thumbnail for cards/lists (300px)
+      thumbnail: result.secure_url.replace('/upload/', '/upload/w_300,h_300,c_fill,q_auto,f_auto/'),
+      // Medium for detail view (600px)
+      medium: result.secure_url.replace('/upload/', '/upload/w_600,h_600,c_fill,q_auto,f_auto/'),
+      // Large for full view (800px)
+      large: result.secure_url.replace('/upload/', '/upload/w_800,h_800,c_fill,q_auto,f_auto/')
+    };
   } catch (error) {
     console.error("Cloudinary upload error:", error);
     throw error;
   }
 };
 
-const generateCocktail = async (ingredients, flavors, dietaryNeeds) => {
+const generateCocktail = async (ingredients, flavors, dietaryNeeds, options = {}) => {
+  const { skipCache = false } = options;
+
+  // Generate cache key from inputs
+  const cacheKey = SimpleCache.generateKey({ ingredients, flavors, dietaryNeeds });
+
+  // Check cache first (unless explicitly skipped)
+  if (!skipCache) {
+    const cachedRecipe = recipeCache.get(cacheKey);
+    if (cachedRecipe) {
+      console.log(`[Cache] Hit for recipe: ${cachedRecipe.name}`);
+      // Return cached recipe with new ID (so it's a fresh instance)
+      return {
+        ...cachedRecipe,
+        cocktailId: uuidv4(),
+        imageUrl: null,
+        imageStatus: "pending",
+        fromCache: true
+      };
+    }
+    console.log(`[Cache] Miss - generating new recipe`);
+  }
+
   try {
     const prompt = `As an expert mixologist with 20+ years of experience, create a sophisticated cocktail recipe using these preferences:
 
@@ -85,7 +126,9 @@ The healthRating should be on a scale of 1-10 where:
 4-6: Moderate alcohol, some natural ingredients, balanced indulgence
 7-10: Lower alcohol content, fresh/natural ingredients, functional health benefits`;
 
-    const response = await openai.chat.completions.create({
+    // Execute with timeout and retry for resilience
+    const response = await executeWithResilience(
+      () => openai.chat.completions.create({
       model: "gpt-4",
       messages: [
         {
@@ -100,7 +143,13 @@ The healthRating should be on a scale of 1-10 where:
       ],
       temperature: 0.8,
       max_tokens: 1200,
-    });
+      }),
+      {
+        timeout: AI_TIMEOUTS.RECIPE_GENERATION,
+        maxRetries: 3,
+        operationName: 'Recipe Generation'
+      }
+    );
 
     const recipeString = response.choices[0].message.content.trim();
 
@@ -147,6 +196,7 @@ The healthRating should be on a scale of 1-10 where:
 
     recipe.cocktailId = uuidv4();
 
+    // Generate image inline (original approach - waits for image)
     try {
       const imagePrompt = `A stunning, professional photograph of a ${
         recipe.name
@@ -160,27 +210,54 @@ The healthRating should be on a scale of 1-10 where:
       
       Style: high-end cocktail photography, dramatic lighting, rich colors, photorealistic, 4K quality.`;
 
-      const imageResponse = await openai.images.generate({
-        model: "dall-e-3",
+      // Image quality settings
+      const imageQuality = process.env.IMAGE_QUALITY || "balanced";
+      
+      const imageSettings = {
+        fast: { model: "dall-e-2", size: "512x512" },
+        balanced: { model: "dall-e-3", size: "1024x1024", quality: "standard", style: "natural" },
+        quality: { model: "dall-e-3", size: "1024x1024", quality: "hd", style: "vivid" }
+      };
+
+      const settings = imageSettings[imageQuality] || imageSettings.balanced;
+
+      const imageResponse = await executeWithResilience(
+        () => openai.images.generate({
         prompt: imagePrompt,
         n: 1,
-        size: "1024x1024",
-        quality: "hd",
-        style: "vivid",
-      });
+          ...settings,
+        }),
+        {
+          timeout: AI_TIMEOUTS.IMAGE_GENERATION,
+          maxRetries: 2,
+          operationName: 'Image Generation'
+        }
+      );
+
+      console.log(`[Image] Generated with "${imageQuality}" quality using ${settings.model}`);
 
       if (imageResponse.data && imageResponse.data[0].url) {
-        // Upload the temporary DALL-E URL to Cloudinary
-        const permanentImageUrl = await uploadToCloudinary(
-          imageResponse.data[0].url,
-          recipe.cocktailId
+        // Upload to Cloudinary
+        const imageUrls = await withTimeout(
+          uploadToCloudinary(imageResponse.data[0].url, recipe.cocktailId),
+          AI_TIMEOUTS.CLOUDINARY_UPLOAD,
+          'Cloudinary Upload'
         );
-        recipe.imageUrl = permanentImageUrl;
-        console.log(`Image uploaded to Cloudinary: ${permanentImageUrl}`);
+        // Store all image sizes
+        recipe.imageUrl = imageUrls.medium;      // Default to medium size
+        recipe.imageUrls = imageUrls;            // All sizes available
+        console.log(`[Image] Uploaded to Cloudinary: ${imageUrls.medium}`);
       }
     } catch (imageError) {
       console.error("Image generation/upload error:", imageError);
+      recipe.imageUrl = null; // Continue without image if it fails
     }
+
+    // Cache the recipe for future requests
+    const recipeToCache = { ...recipe };
+    delete recipeToCache.cocktailId;
+    recipeCache.set(cacheKey, recipeToCache, CACHE_CONFIG.RECIPE_TTL);
+    console.log(`[Cache] Stored recipe: ${recipe.name}`);
 
     return recipe;
   } catch (error) {
@@ -189,4 +266,257 @@ The healthRating should be on a scale of 1-10 where:
   }
 };
 
-module.exports = { generateCocktail };
+/**
+ * Generate cocktail recipe with STREAMING response
+ * Streams recipe sections as they're generated for better UX
+ * @param {Array} ingredients - List of ingredients
+ * @param {Array} flavors - Desired flavors  
+ * @param {Array} dietaryNeeds - Dietary requirements
+ * @param {Response} res - Express response object for streaming
+ */
+const generateCocktailStream = async (ingredients, flavors, dietaryNeeds, res) => {
+  // Set up SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  // Helper to send SSE events
+  const sendEvent = (type, data) => {
+    res.write(`data: ${JSON.stringify({ type, data, timestamp: Date.now() })}\n\n`);
+  };
+
+  try {
+    sendEvent('status', 'Starting recipe generation...');
+
+    const prompt = `As an expert mixologist with 20+ years of experience, create a sophisticated cocktail recipe using these preferences:
+
+Available Ingredients: ${ingredients.join(", ")}
+Desired Flavors: ${flavors.join(", ")}
+Dietary Requirements: ${dietaryNeeds.join(", ")}
+
+Create a unique, well-balanced cocktail. Respond with ONLY valid JSON in this exact format:
+{
+  "name": "Creative Cocktail Name",
+  "ingredients": ["2 oz spirit", "0.75 oz citrus", "0.5 oz sweetener"],
+  "instructions": ["Step 1", "Step 2", "Step 3"],
+  "description": "Flavor profile description",
+  "tip": "Professional tip",
+  "glassware": "Glass type",
+  "healthRating": 7,
+  "healthNotes": "Health analysis"
+}`;
+
+    sendEvent('status', 'Consulting our AI mixologist...');
+
+    // Stream from OpenAI
+    const stream = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: [
+        {
+          role: "system",
+          content: "You are a world-renowned mixologist. Create sophisticated cocktails with precise measurements. Respond with valid JSON only."
+        },
+        { role: "user", content: prompt }
+      ],
+      temperature: 0.8,
+      max_tokens: 1200,
+      stream: true
+    });
+
+    let fullContent = '';
+    let lastParsedState = {};
+
+    sendEvent('status', 'Crafting your perfect cocktail...');
+
+    for await (const chunk of stream) {
+      const content = chunk.choices[0]?.delta?.content || '';
+      if (content) {
+        fullContent += content;
+        
+        // Try to parse partial JSON and extract completed fields
+        const parsed = tryParsePartialRecipe(fullContent);
+        
+        // Send new fields as they become available
+        if (parsed.name && !lastParsedState.name) {
+          sendEvent('name', parsed.name);
+          lastParsedState.name = true;
+        }
+        if (parsed.description && !lastParsedState.description) {
+          sendEvent('description', parsed.description);
+          lastParsedState.description = true;
+        }
+        if (parsed.ingredients?.length > 0 && !lastParsedState.ingredients) {
+          sendEvent('ingredients', parsed.ingredients);
+          lastParsedState.ingredients = true;
+        }
+        if (parsed.instructions?.length > 0 && !lastParsedState.instructions) {
+          sendEvent('instructions', parsed.instructions);
+          lastParsedState.instructions = true;
+        }
+        if (parsed.tip && !lastParsedState.tip) {
+          sendEvent('tip', parsed.tip);
+          lastParsedState.tip = true;
+        }
+        if (parsed.healthRating && !lastParsedState.healthRating) {
+          sendEvent('health', { 
+            rating: parsed.healthRating, 
+            notes: parsed.healthNotes 
+          });
+          lastParsedState.healthRating = true;
+        }
+      }
+    }
+
+    // Parse final complete recipe
+    const cleanedContent = fullContent
+      .replace(/```json\n?/g, "")
+      .replace(/```\n?/g, "")
+      .trim();
+
+    let recipe;
+    try {
+      recipe = JSON.parse(cleanedContent);
+    } catch (parseError) {
+      sendEvent('error', 'Failed to parse recipe. Please try again.');
+      res.end();
+      return;
+    }
+
+    // Add metadata
+    recipe.cocktailId = uuidv4();
+
+    // Send recipe without image first (so user sees content immediately)
+    sendEvent('complete', { ...recipe, imageUrl: null });
+    sendEvent('status', 'Recipe complete! Now generating image...');
+
+    // Generate image
+    try {
+      const imagePrompt = `A stunning, professional photograph of a ${
+        recipe.name
+      } cocktail in a ${recipe.glassware || "elegant glass"}. 
+      
+      The cocktail is made with ${recipe.ingredients
+        .slice(0, 3)
+        .join(", ")} and features ${recipe.description}. 
+      
+      Shot with professional studio lighting, shallow depth of field, on a sophisticated bar counter. 
+      
+      Style: high-end cocktail photography, dramatic lighting, rich colors, photorealistic.`;
+
+      const imageQuality = process.env.IMAGE_QUALITY || "balanced";
+      
+      const imageSettings = {
+        fast: { model: "dall-e-2", size: "512x512" },
+        balanced: { model: "dall-e-3", size: "1024x1024", quality: "standard", style: "natural" },
+        quality: { model: "dall-e-3", size: "1024x1024", quality: "hd", style: "vivid" }
+      };
+
+      const settings = imageSettings[imageQuality] || imageSettings.balanced;
+
+      sendEvent('status', 'Generating cocktail image...');
+
+      const imageResponse = await executeWithResilience(
+        () => openai.images.generate({
+          prompt: imagePrompt,
+          n: 1,
+          ...settings,
+        }),
+        {
+          timeout: AI_TIMEOUTS.IMAGE_GENERATION,
+          maxRetries: 2,
+          operationName: 'Image Generation'
+        }
+      );
+
+      if (imageResponse.data && imageResponse.data[0].url) {
+        sendEvent('status', 'Uploading image...');
+        
+        const imageUrls = await withTimeout(
+          uploadToCloudinary(imageResponse.data[0].url, recipe.cocktailId),
+          AI_TIMEOUTS.CLOUDINARY_UPLOAD,
+          'Cloudinary Upload'
+        );
+        
+        recipe.imageUrl = imageUrls.medium;   // Default to medium
+        recipe.imageUrls = imageUrls;         // All sizes
+        sendEvent('image', imageUrls);        // Send all sizes to frontend
+        console.log(`[Stream] Image generated: ${imageUrls.medium}`);
+      }
+    } catch (imageError) {
+      console.error("Streaming image generation error:", imageError);
+      sendEvent('image_error', 'Failed to generate image');
+      recipe.imageUrl = null;
+    }
+
+    // Cache the complete recipe
+    const cacheKey = SimpleCache.generateKey({ ingredients, flavors, dietaryNeeds });
+    const recipeToCache = { ...recipe };
+    delete recipeToCache.cocktailId;
+    recipeCache.set(cacheKey, recipeToCache, CACHE_CONFIG.RECIPE_TTL);
+
+    // Send final complete recipe with image
+    sendEvent('done', recipe);
+
+    res.end();
+    return recipe;
+
+  } catch (error) {
+    console.error('Streaming recipe error:', error);
+    sendEvent('error', error.message || 'Failed to generate recipe');
+    res.end();
+    throw error;
+  }
+};
+
+/**
+ * Try to parse partial JSON and extract completed fields
+ * This is forgiving of incomplete JSON
+ */
+const tryParsePartialRecipe = (partialJson) => {
+  const result = {};
+  
+  // Extract name
+  const nameMatch = partialJson.match(/"name"\s*:\s*"([^"]+)"/);
+  if (nameMatch) result.name = nameMatch[1];
+  
+  // Extract description
+  const descMatch = partialJson.match(/"description"\s*:\s*"([^"]+)"/);
+  if (descMatch) result.description = descMatch[1];
+  
+  // Extract ingredients array (only if complete)
+  const ingredientsMatch = partialJson.match(/"ingredients"\s*:\s*\[([\s\S]*?)\]/);
+  if (ingredientsMatch) {
+    try {
+      result.ingredients = JSON.parse(`[${ingredientsMatch[1]}]`);
+    } catch (e) { /* incomplete array */ }
+  }
+  
+  // Extract instructions array (only if complete)
+  const instructionsMatch = partialJson.match(/"instructions"\s*:\s*\[([\s\S]*?)\]/);
+  if (instructionsMatch) {
+    try {
+      result.instructions = JSON.parse(`[${instructionsMatch[1]}]`);
+    } catch (e) { /* incomplete array */ }
+  }
+  
+  // Extract tip
+  const tipMatch = partialJson.match(/"tip"\s*:\s*"([^"]+)"/);
+  if (tipMatch) result.tip = tipMatch[1];
+  
+  // Extract health rating
+  const healthMatch = partialJson.match(/"healthRating"\s*:\s*(\d+)/);
+  if (healthMatch) result.healthRating = parseInt(healthMatch[1]);
+  
+  // Extract health notes
+  const healthNotesMatch = partialJson.match(/"healthNotes"\s*:\s*"([^"]+)"/);
+  if (healthNotesMatch) result.healthNotes = healthNotesMatch[1];
+  
+  return result;
+};
+
+module.exports = { 
+  generateCocktail, 
+  generateCocktailStream
+};

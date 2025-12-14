@@ -1,8 +1,21 @@
 // services/imageAnalysisService.js
 const { OpenAI } = require("openai");
+const crypto = require("crypto");
+const { executeWithResilience, AI_TIMEOUTS } = require("../utils/aiHelpers");
+const { imageAnalysisCache, CACHE_CONFIG } = require("../utils/cache");
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
+
+/**
+ * Generate a hash for image data to use as cache key
+ * @param {string} imageData - Base64 image data
+ * @returns {string} - Hash of the image
+ */
+const hashImageData = (imageData) => {
+  return crypto.createHash('md5').update(imageData).digest('hex');
+};
 
 /**
  * Service to analyze cocktail images and identify ingredients
@@ -18,55 +31,77 @@ const analyzeCocktailImage = async (imageBase64) => {
       ? imageBase64.split("base64,")[1]
       : imageBase64;
 
-    // Call OpenAI Vision API to analyze the image
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o", // Updated to use gpt-4o
-      messages: [
-        {
-          role: "system",
-          content: `You are a professional mixologist and cocktail expert.
-          Analyze the provided cocktail image and identify:
-          1. The most likely name of the cocktail
-          2. The ingredients you can identify from the image
-          3. Any garnishes visible
-          4. The approximate color and appearance
-          
-          Provide your response as valid JSON with this exact structure:
+    // Check cache first (using hash of image data)
+    const imageHash = hashImageData(base64Data);
+    const cachedResult = imageAnalysisCache.get(imageHash);
+    if (cachedResult) {
+      console.log(`[Cache] Hit for image analysis`);
+      return { ...cachedResult, fromCache: true };
+    }
+    console.log(`[Cache] Miss for image analysis - calling API`);
+
+    // Call OpenAI Vision API to analyze the image with timeout and retry
+    const response = await executeWithResilience(
+      () => openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
           {
-            "cocktailName": "Name of the cocktail",
-            "ingredients": ["ingredient1", "ingredient2"],
-            "garnishes": ["garnish1", "garnish2"],
-            "appearance": "Description"
-          }
-          
-          DO NOT include any text before or after the JSON object.`,
-        },
-        {
-          role: "user",
-          content: [
+            role: "system",
+            content: `You are a professional mixologist and cocktail expert.
+            Analyze the provided cocktail image and identify:
+            1. The most likely name of the cocktail
+            2. The ingredients you can identify from the image
+            3. Any garnishes visible
+            4. The approximate color and appearance
+            
+            Provide your response as valid JSON with this exact structure:
             {
-              type: "image_url",
-              image_url: {
-                url: `data:image/jpeg;base64,${base64Data}`,
+              "cocktailName": "Name of the cocktail",
+              "ingredients": ["ingredient1", "ingredient2"],
+              "garnishes": ["garnish1", "garnish2"],
+              "appearance": "Description"
+            }
+            
+            DO NOT include any text before or after the JSON object.`,
+          },
+          {
+            role: "user",
+            content: [
+              {
+                type: "image_url",
+                image_url: {
+                  url: `data:image/jpeg;base64,${base64Data}`,
+                },
               },
-            },
-            {
-              type: "text",
-              text: "Identify this cocktail and its ingredients. Respond with JSON only.",
-            },
-          ],
-        },
-      ],
-      response_format: { type: "json_object" }, // Explicitly request JSON response
-      max_tokens: 800,
-    });
+              {
+                type: "text",
+                text: "Identify this cocktail and its ingredients. Respond with JSON only.",
+              },
+            ],
+          },
+        ],
+        response_format: { type: "json_object" },
+        max_tokens: 800,
+      }),
+      {
+        timeout: AI_TIMEOUTS.IMAGE_ANALYSIS,
+        maxRetries: 2,
+        operationName: 'Image Analysis'
+      }
+    );
 
     // Extract the response content
     const responseContent = response.choices[0].message.content.trim();
 
     try {
       // Parse JSON response
-      return JSON.parse(responseContent);
+      const result = JSON.parse(responseContent);
+      
+      // Cache the result
+      imageAnalysisCache.set(imageHash, result, CACHE_CONFIG.IMAGE_ANALYSIS_TTL);
+      console.log(`[Cache] Stored image analysis result`);
+      
+      return result;
     } catch (parseError) {
       console.error("JSON parse error:", parseError);
 

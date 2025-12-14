@@ -1,4 +1,6 @@
 const { OpenAI } = require("openai");
+const { executeWithResilience, AI_TIMEOUTS } = require("../utils/aiHelpers");
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
@@ -17,13 +19,45 @@ const generateCocktailImage = async (req, res) => {
       });
     }
 
-    // Generate image using OpenAI DALL-E
-    const response = await openai.images.generate({
-      model: "dall-e-3", // or "dall-e-2" if you prefer
-      prompt: prompt,
-      n: 1,
-      size: "1024x1024", // or other sizes as needed
-    });
+    // Image quality from env or request
+    const imageQuality = req.body.quality || process.env.IMAGE_QUALITY || "balanced";
+    
+    const imageSettings = {
+      fast: {
+        model: "dall-e-2",
+        size: "512x512",
+      },
+      balanced: {
+        model: "dall-e-3",
+        size: "1024x1024",
+        quality: "standard",
+        style: "natural",
+      },
+      quality: {
+        model: "dall-e-3",
+        size: "1024x1024",
+        quality: "hd",
+        style: "vivid",
+      }
+    };
+
+    const settings = imageSettings[imageQuality] || imageSettings.balanced;
+
+    // Generate image using OpenAI DALL-E with timeout and retry
+    const response = await executeWithResilience(
+      () => openai.images.generate({
+        prompt: prompt,
+        n: 1,
+        ...settings,
+      }),
+      {
+        timeout: AI_TIMEOUTS.IMAGE_GENERATION,
+        maxRetries: 2,
+        operationName: 'Image Generation'
+      }
+    );
+    
+    console.log(`[Image] Generated with "${imageQuality}" quality`);
 
     // Extract the image URL from the response
     const imageUrl = response.data[0].url;

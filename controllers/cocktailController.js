@@ -1,9 +1,46 @@
-const { generateCocktail } = require("../service/cocktailService");
+const { 
+  generateCocktail,
+  generateCocktailStream
+} = require("../service/cocktailService");
+const { recipeCache, imageAnalysisCache } = require("../utils/cache");
 const { Cocktail, Collection } = require("../models/cocktailModel");
 const { v4: uuidv4 } = require("uuid");
 const mongoose = require("mongoose");
 
 const getCocktail = async (req, res) => {
+  try {
+    const { ingredients, flavors, dietaryNeeds, newRecipe } = req.body;
+
+    // Validate input
+    if (!ingredients || !flavors || !dietaryNeeds) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    // Generate the cocktail recipe (includes image generation)
+    // If newRecipe=true, skip cache and always generate fresh
+    const recipe = await generateCocktail(ingredients, flavors, dietaryNeeds, {
+      skipCache: newRecipe === true
+    });
+
+    // Return the complete recipe with image
+    res.status(200).json({ 
+      code: "00", 
+      recipe,
+      fromCache: recipe.fromCache || false,
+      message: recipe.fromCache 
+        ? "Recipe retrieved from cache!"
+        : "Recipe generated successfully!"
+    });
+
+  } catch (error) {
+    console.error("Error in getCocktailRecipe:", error);
+    res.status(500).json({ message: "Failed to generate cocktail recipe" });
+  }
+};
+
+// Generate cocktail with streaming response (SSE)
+// Note: This streams the recipe text but image is still generated after
+const getCocktailStream = async (req, res) => {
   try {
     const { ingredients, flavors, dietaryNeeds } = req.body;
 
@@ -12,19 +49,15 @@ const getCocktail = async (req, res) => {
       return res.status(400).json({ message: "Missing required fields" });
     }
 
-    // Generate the cocktail recipe
-    const recipe = await generateCocktail(ingredients, flavors, dietaryNeeds);
+    // Generate with streaming - this handles the response directly
+    await generateCocktailStream(ingredients, flavors, dietaryNeeds, res);
 
-    const cocktailWithId = {
-      ...recipe,
-      cocktailId: uuidv4(), // Generate a unique ID for the cocktail
-    };
-
-    // Return the generated recipe
-    res.status(200).json({ code: "00", recipe: cocktailWithId });
   } catch (error) {
-    console.error("Error in getCocktailRecipe:", error);
-    res.status(500).json({ message: "Failed to generate cocktail recipe" });
+    console.error("Error in getCocktailStream:", error);
+    // Only send error if headers haven't been sent
+    if (!res.headersSent) {
+      res.status(500).json({ message: "Failed to generate cocktail recipe" });
+    }
   }
 };
 
@@ -268,12 +301,47 @@ const getSharedRecipe = async (req, res) => {
   }
 };
 
+// Get cache statistics for monitoring
+const getCacheStats = async (req, res) => {
+  try {
+    const stats = {
+      recipeCache: recipeCache.getStats(),
+      imageAnalysisCache: imageAnalysisCache.getStats(),
+      timestamp: new Date().toISOString()
+    };
+
+    res.status(200).json({ code: "00", stats });
+  } catch (error) {
+    console.error("Error getting cache stats:", error);
+    res.status(500).json({ message: "Failed to get cache stats" });
+  }
+};
+
+// Clear caches (admin only)
+const clearCaches = async (req, res) => {
+  try {
+    recipeCache.clear();
+    imageAnalysisCache.clear();
+
+    res.status(200).json({ 
+      code: "00", 
+      message: "All caches cleared successfully" 
+    });
+  } catch (error) {
+    console.error("Error clearing caches:", error);
+    res.status(500).json({ message: "Failed to clear caches" });
+  }
+};
+
 module.exports = {
   getCocktail,
+  getCocktailStream,
   saveCocktail,
   saveToCollection,
   savedCocktail,
   deleteCocktail,
   deleteCollection,
   getSharedRecipe,
+  getCacheStats,
+  clearCaches,
 };
