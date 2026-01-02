@@ -7,6 +7,7 @@ const userRoutes = require("./routes/users");
 const authRoutes = require("./routes/auth");
 const cocktailRoutes = require("./routes/cocktail");
 const collectionRoutes = require("./routes/collectionRoutes");
+const healthRoutes = require("./routes/health");
 const swaggerJsdoc = require("swagger-jsdoc");
 const swaggerUi = require("swagger-ui-express");
 const swaggerOptions = require("./swaggerOptions");
@@ -57,6 +58,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/cocktail", cocktailRoutes);
 app.use("/api", collectionRoutes);
+app.use("/api/health", healthRoutes);
 
 const port = process.env.PORT || 8090;
 app.listen(port, () => console.log(`Listening on port ${port}...`));

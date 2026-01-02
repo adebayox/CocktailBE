@@ -1,0 +1,492 @@
+{
+  "stack": {
+    "runtime": "Node.js",
+    "framework": "Express.js v4.21.2",
+    "database": "MongoDB (via Mongoose v8.10.0)",
+    "auth": "JWT (jsonwebtoken v9.0.2) with Bearer token authentication, 7-day expiration",
+    "hosting": "Render (based on README reference to cocktailbe.onrender.com)",
+    "external_apis": [
+      {
+        "name": "OpenAI",
+        "version": "v4.83.0",
+        "models_used": [
+          "gpt-4 (recipe generation)",
+          "gpt-3.5-turbo (chat responses)",
+          "gpt-4o (image analysis/vision)",
+          "dall-e-3 (image generation)",
+          "dall-e-2 (optional fast image generation)"
+        ],
+        "endpoints": [
+          "chat.completions.create",
+          "images.generate"
+        ]
+      },
+      {
+        "name": "Cloudinary",
+        "version": "v2.6.1",
+        "purpose": "Image storage and optimization (WebP conversion, multiple size variants)"
+      },
+      {
+        "name": "Stripe",
+        "version": "v17.7.0",
+        "purpose": "Subscription payment processing"
+      }
+    ]
+  },
+  "features": {
+    "endpoints": [
+      {
+        "method": "POST",
+        "path": "/api/users",
+        "purpose": "User registration with email/password validation",
+        "auth_required": false,
+        "validation": "Joi schema with password complexity requirements"
+      },
+      {
+        "method": "POST",
+        "path": "/api/auth",
+        "purpose": "User login, returns JWT token",
+        "auth_required": false,
+        "validation": "Username and password required"
+      },
+      {
+        "method": "POST",
+        "path": "/api/cocktail",
+        "purpose": "Generate AI-powered cocktail recipe with image",
+        "auth_required": true,
+        "features": ["Caching support", "Optional newRecipe flag to bypass cache"]
+      },
+      {
+        "method": "POST",
+        "path": "/api/cocktail/stream",
+        "purpose": "Generate cocktail recipe with Server-Sent Events (SSE) streaming",
+        "auth_required": true,
+        "response_type": "text/event-stream",
+        "events": ["status", "name", "description", "ingredients", "instructions", "tip", "health", "complete", "image", "done", "error"]
+      },
+      {
+        "method": "POST",
+        "path": "/api/cocktail/save",
+        "purpose": "Save generated cocktail recipe to user's collection",
+        "auth_required": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/cocktail/save",
+        "purpose": "Retrieve all saved cocktails for authenticated user",
+        "auth_required": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/cocktail/save-to-collection",
+        "purpose": "Add cocktail to a specific named collection",
+        "auth_required": true
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/cocktail/cocktail/:cocktailId",
+        "purpose": "Delete a saved cocktail (user-scoped)",
+        "auth_required": true
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/cocktail/collection/:collectionId",
+        "purpose": "Delete a collection (user-scoped)",
+        "auth_required": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/cocktail/shared/:recipeId",
+        "purpose": "Public endpoint to retrieve shared recipe by ID (no auth required)",
+        "auth_required": false,
+        "features": ["Supports both MongoDB ObjectId and UUID cocktailId"]
+      },
+      {
+        "method": "POST",
+        "path": "/api/cocktail/chat",
+        "purpose": "Non-streaming AI chat about a specific recipe",
+        "auth_required": true,
+        "model": "gpt-3.5-turbo"
+      },
+      {
+        "method": "POST",
+        "path": "/api/cocktail/chat/stream",
+        "purpose": "Streaming AI chat with SSE (tokens arrive progressively)",
+        "auth_required": true,
+        "response_type": "text/event-stream",
+        "model": "gpt-3.5-turbo"
+      },
+      {
+        "method": "POST",
+        "path": "/api/cocktail/analyze-image",
+        "purpose": "Analyze uploaded cocktail image to identify name and ingredients",
+        "auth_required": true,
+        "model": "gpt-4o (vision)",
+        "features": ["MD5 hash-based caching", "Base64 image input"]
+      },
+      {
+        "method": "POST",
+        "path": "/api/cocktail/generate-image",
+        "purpose": "Generate cocktail image from text prompt (standalone)",
+        "auth_required": false,
+        "model": "dall-e-3 or dall-e-2 (configurable)"
+      },
+      {
+        "method": "POST",
+        "path": "/api/cocktail/ratings",
+        "purpose": "Submit rating (1-5) and feedback for a recipe",
+        "auth_required": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/cocktail/ratings/:recipeId",
+        "purpose": "Get all ratings and feedback for a recipe",
+        "auth_required": true,
+        "features": ["Populates user data (username)"]
+      },
+      {
+        "method": "GET",
+        "path": "/api/cocktail/cache/stats",
+        "purpose": "Get cache statistics (hits, misses, hit rate)",
+        "auth_required": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/cocktail/cache/clear",
+        "purpose": "Clear all caches (admin utility)",
+        "auth_required": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/collection",
+        "purpose": "Create a new cocktail collection",
+        "auth_required": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/collections/:userId",
+        "purpose": "Get all collections for a user",
+        "auth_required": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/recipes/:userId",
+        "purpose": "Get all saved recipes for a user",
+        "auth_required": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/collection/:collectionId",
+        "purpose": "Get all recipes in a specific collection",
+        "auth_required": true,
+        "features": ["Populates cocktail references"]
+      },
+      {
+        "method": "POST",
+        "path": "/api/create-checkout-session",
+        "purpose": "Create Stripe checkout session for subscription",
+        "auth_required": false
+      },
+      {
+        "method": "POST",
+        "path": "/api/webhook",
+        "purpose": "Handle Stripe webhook events (subscription updates)",
+        "auth_required": false,
+        "content_type": "application/json (raw body)"
+      },
+      {
+        "method": "GET",
+        "path": "/api-docs",
+        "purpose": "Swagger/OpenAPI documentation UI",
+        "auth_required": false
+      }
+    ],
+    "background_jobs": [],
+    "special_features": [
+      "Server-Sent Events (SSE) streaming for progressive UI updates",
+      "In-memory caching with TTL (recipe cache: 1 hour, image analysis: 30 min)",
+      "Automatic image optimization via Cloudinary (WebP, multiple sizes: 300px, 600px, 800px, original)",
+      "Retry logic with exponential backoff for AI API calls",
+      "Timeout protection for all external API calls",
+      "Structured error handling with retryable error detection",
+      "Cache key normalization (sorted keys/arrays for consistent hashing)",
+      "Image quality configuration (fast/balanced/quality via IMAGE_QUALITY env var)"
+    ]
+  },
+  "ai_integration": {
+    "provider": "OpenAI",
+    "models": {
+      "recipe_generation": {
+        "model": "gpt-4",
+        "temperature": 0.8,
+        "max_tokens": 1200,
+        "timeout": 45000,
+        "max_retries": 3
+      },
+      "chat": {
+        "model": "gpt-3.5-turbo",
+        "temperature": 0.7,
+        "max_tokens": 250,
+        "timeout": 15000,
+        "max_retries": 2,
+        "streaming": true
+      },
+      "image_analysis": {
+        "model": "gpt-4o",
+        "timeout": 30000,
+        "max_retries": 2,
+        "response_format": "json_object"
+      },
+      "image_generation": {
+        "model": "dall-e-3 (default) or dall-e-2 (fast mode)",
+        "size": "1024x1024 (dall-e-3) or 512x512 (dall-e-2)",
+        "quality": "hd/standard (dall-e-3) or standard (dall-e-2)",
+        "style": "vivid/natural (dall-e-3)",
+        "timeout": 60000,
+        "max_retries": 2
+      }
+    },
+    "prompt_strategy": {
+      "recipe_generation": {
+        "system_prompt": "You are a world-renowned mixologist and cocktail expert with extensive knowledge of flavor profiles, techniques, and health-conscious bartending. You create only sophisticated, well-balanced cocktails with precise measurements and detailed instructions. Always respond with valid JSON only - no additional text, markdown, or explanations.",
+        "user_prompt_structure": "Multi-part prompt including: available ingredients, desired flavors, dietary requirements, detailed formatting requirements, health analysis instructions, JSON schema specification",
+        "techniques": [
+          "Structured JSON output enforcement",
+          "Detailed measurement requirements (oz, ml, dashes)",
+          "Step-by-step instruction requirements (6-8 steps)",
+          "Health rating scale (1-10) with specific criteria",
+          "Professional mixology terminology"
+        ]
+      },
+      "chat": {
+        "system_prompt": "You are a helpful cocktail and mixology expert. You're answering questions about a specific cocktail recipe. Be concise and friendly in your responses.",
+        "context_injection": "Recipe information formatted as structured text (name, description, ingredients, instructions, health rating, tip)",
+        "techniques": ["Context-aware responses", "Concise output (250 tokens max)"]
+      },
+      "image_analysis": {
+        "system_prompt": "You are a professional mixologist and cocktail expert. Analyze the provided cocktail image and identify: cocktail name, ingredients, garnishes, appearance.",
+        "output_format": "Strict JSON with structure: { cocktailName, ingredients[], garnishes[], appearance }",
+        "techniques": ["Vision API with base64 image", "JSON response format enforcement", "Fallback parsing for malformed responses"]
+      },
+      "image_generation": {
+        "prompt_structure": "Professional photography description including: cocktail name, glassware, ingredients (first 3), description, lighting, style, quality specifications",
+        "techniques": ["Detailed visual specifications", "Professional photography terminology", "Style consistency (high-end, dramatic lighting, photorealistic)"]
+      }
+    },
+    "response_processing": {
+      "recipe_generation": {
+        "steps": [
+          "Clean markdown code blocks (```json, ```)",
+          "JSON.parse with error handling",
+          "Required field validation (name, ingredients, instructions, description, tip, healthRating, healthNotes)",
+          "Array validation (min 3 ingredients, min 5 instructions)",
+          "UUID generation for cocktailId",
+          "Image generation (DALL-E 3) with prompt derived from recipe",
+          "Cloudinary upload with optimization",
+          "Cache storage"
+        ]
+      },
+      "image_analysis": {
+        "steps": [
+          "Base64 data extraction",
+          "MD5 hash generation for cache key",
+          "Cache lookup",
+          "OpenAI Vision API call",
+          "JSON parsing with fallback regex extraction",
+          "Cache storage on success"
+        ]
+      },
+      "streaming": {
+        "recipe_streaming": {
+          "technique": "Progressive JSON parsing - extract completed fields as they appear",
+          "events_sent": ["status", "name", "description", "ingredients", "instructions", "tip", "health", "complete", "image", "done"],
+          "format": "Server-Sent Events (SSE) with JSON payloads"
+        },
+        "chat_streaming": {
+          "technique": "Token-by-token streaming from OpenAI",
+          "format": "SSE with content chunks",
+          "completion_signal": "done: true flag"
+        }
+      }
+    }
+  },
+  "data_models": [
+    {
+      "name": "User",
+      "schema": {
+        "username": "String (conditional - required if not Google signup)",
+        "email": "String (required, unique)",
+        "password": "String (hashed with bcrypt, conditional - required if not Google signup)",
+        "subscriptionStatus": "String (enum: active/inactive, default: inactive)",
+        "subscriptionId": "String (optional)"
+      },
+      "methods": [
+        "generateAuthToken() - Creates JWT with 7-day expiration",
+        "generateResetToken() - Creates password reset token with 10-minute expiration"
+      ],
+      "validation": "Joi schema with password complexity requirements (joi-password-complexity)",
+      "relationships": [
+        "One-to-many with Cocktail (userId)",
+        "One-to-many with Collection (userId)",
+        "One-to-many with Rating (userId)"
+      ]
+    },
+    {
+      "name": "Cocktail",
+      "schema": {
+        "name": "String",
+        "ingredients": "Array[String]",
+        "instructions": "Array[String] (required)",
+        "description": "String",
+        "tip": "String",
+        "userId": "ObjectId (ref: User)",
+        "cocktailId": "String (UUID for sharing)",
+        "imageUrl": "String (optional, Cloudinary URL)",
+        "imageUrls": "Object (optional, contains thumbnail, medium, large, original)",
+        "healthRating": "Number (min: 1, max: 10)",
+        "healthNotes": "String"
+      },
+      "relationships": [
+        "Many-to-one with User (userId)",
+        "Many-to-many with Collection (via cocktails array)",
+        "One-to-many with Rating (recipeId)"
+      ]
+    },
+    {
+      "name": "Collection",
+      "schema": {
+        "name": "String",
+        "userId": "ObjectId (ref: User)",
+        "cocktails": "Array[Mixed] (can contain full cocktail objects or references)"
+      },
+      "relationships": [
+        "Many-to-one with User (userId)",
+        "Many-to-many with Cocktail (via cocktails array)"
+      ]
+    },
+    {
+      "name": "Rating",
+      "schema": {
+        "userId": "ObjectId (ref: User, required)",
+        "recipeId": "ObjectId (ref: Cocktail, required)",
+        "rating": "Number (required, min: 1, max: 5)",
+        "feedback": "String (trimmed)",
+        "createdAt": "Date (default: Date.now)"
+      },
+      "relationships": [
+        "Many-to-one with User (userId)",
+        "Many-to-one with Cocktail (recipeId)"
+      ],
+      "validation": "Rating must be 1-5, recipeId must exist"
+    }
+  ],
+  "security": {
+    "auth_method": "JWT Bearer token authentication",
+    "token_format": "Authorization: Bearer <token>",
+    "token_expiration": "7 days",
+    "token_storage": "Client-side (not httpOnly cookies)",
+    "validation": {
+      "input_validation": "Joi schemas for user registration/login",
+      "password_validation": "joi-password-complexity (strength requirements)",
+      "objectid_validation": "mongoose.isValidObjectId() checks before queries",
+      "required_fields": "Explicit checks in controllers before processing"
+    },
+    "rate_limiting": false,
+    "cors_config": {
+      "enabled": true,
+      "allowed_origins": [
+        "http://localhost:5173",
+        "https://cocktailrecipegen.netlify.app"
+      ],
+      "credentials": true,
+      "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+      "allowed_headers": ["Content-Type", "Authorization"],
+      "implementation": "Whitelist-based origin checking with error callback"
+    },
+    "error_handling": {
+      "pattern": "Try-catch blocks in all controllers",
+      "error_responses": "Structured JSON with code field (00 = success, 01/99 = error)",
+      "logging": "Console.error for debugging",
+      "user_facing_errors": "Generic messages (Internal server error) to avoid information leakage"
+    },
+    "environment_variables": {
+      "required": [
+        "DB (MongoDB connection string)",
+        "JWTPRIVATEKEY (JWT secret)",
+        "OPENAI_API_KEY",
+        "CLOUDINARY_CLOUD_NAME",
+        "CLOUDINARY_API_KEY",
+        "CLOUDINARY_API_SECRET",
+        "SALT (bcrypt salt rounds)"
+      ],
+      "optional": [
+        "PORT (default: 8090)",
+        "IMAGE_QUALITY (fast/balanced/quality)",
+        "FRONTEND_URL (for Stripe redirects)",
+        "STRIPE_SECRET_KEY",
+        "STRIPE_WEBHOOK_SECRET"
+      ],
+      "management": "dotenv package for .env file loading"
+    },
+    "data_sanitization": {
+      "password_hashing": "bcrypt with configurable salt rounds",
+      "input_trimming": "Joi trim option, mongoose trim in schemas",
+      "sql_injection": "N/A (MongoDB with Mongoose ODM provides protection)",
+      "xss_protection": "Not explicitly implemented (relies on frontend)"
+    }
+  },
+  "engineering_highlights": [
+    "Custom resilience layer (utils/aiHelpers.js) with timeout and retry logic for all AI calls",
+    "Exponential backoff retry strategy with jitter to prevent thundering herd",
+    "Smart retry detection - only retries on recoverable errors (429, 5xx, network errors)",
+    "In-memory caching system with TTL, automatic cleanup, and LRU-style eviction",
+    "Cache key normalization (sorted keys/arrays) for consistent cache hits",
+    "Image optimization pipeline: DALL-E → Cloudinary → WebP conversion → Multiple size variants",
+    "Server-Sent Events (SSE) implementation for progressive UI updates",
+    "Progressive JSON parsing for streaming recipe generation",
+    "MD5 hash-based caching for image analysis (same image = instant response)",
+    "Configurable image quality (fast/balanced/quality) via environment variable",
+    "Structured error handling with operation-specific timeouts",
+    "Swagger/OpenAPI documentation with JSDoc annotations",
+    "Modular architecture: routes → controllers → services pattern",
+    "User-scoped data access (cocktail deletion checks userId)",
+    "Flexible recipe sharing (supports both ObjectId and UUID lookup)",
+    "Background image generation capability (though currently inline for simplicity)",
+    "Stripe webhook handling for subscription management",
+    "Password reset token generation (though endpoint not fully implemented)",
+    "Collection system with mixed cocktail storage (full objects or references)"
+  ],
+  "performance_optimizations": [
+    "Caching reduces OpenAI API calls for repeated requests",
+    "Image optimization via Cloudinary (WebP, multiple sizes) reduces bandwidth",
+    "Streaming responses improve perceived performance",
+    "Timeout protection prevents hanging requests",
+    "Retry logic improves reliability without manual intervention",
+    "Cache statistics endpoint for monitoring hit rates"
+  ],
+  "scalability_considerations": [
+    "In-memory cache limits (1000 recipes, 200 image analyses) - would need Redis for horizontal scaling",
+    "No rate limiting implemented - could be overwhelmed by traffic",
+    "MongoDB connection pooling via Mongoose",
+    "Stateless JWT authentication enables horizontal scaling",
+    "Image storage on Cloudinary (CDN-backed) scales automatically",
+    "No database connection pooling configuration visible",
+    "Single process deployment (no clustering/worker threads)"
+  ],
+  "code_quality": {
+    "error_handling": "Comprehensive try-catch blocks",
+    "logging": "Console.log/error for debugging (not production-grade logging)",
+    "code_organization": "Clear separation: routes → controllers → services → models",
+    "documentation": "Swagger/OpenAPI with JSDoc, inline comments for complex logic",
+    "validation": "Joi schemas for user input, mongoose validation for data",
+    "type_safety": "JavaScript (no TypeScript) - runtime validation only"
+  },
+  "deployment": {
+    "platform": "Render (inferred from README)",
+    "api_docs_url": "https://cocktailbe.onrender.com/api-docs",
+    "start_command": "nodemon index.js (development) or node index.js (production)",
+    "environment": "Node.js with Express",
+    "database": "MongoDB (cloud-hosted, connection string in env)"
+  }
+}
+
